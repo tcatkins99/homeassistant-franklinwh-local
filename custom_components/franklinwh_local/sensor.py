@@ -94,6 +94,14 @@ def _raw(d: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in d.items() if k not in ("opt", "result", "reason")}
 
 
+def _agate_temperature(d: dict[str, Any]) -> float | None:
+    """t_amb (1301) is tenths of a degree C on Direct Connect (inferred: other reporters
+    see ~200-206 there for ~20 C). The Modbus snapshot fills the same field from its own
+    temp_ambient (SunSpec, already scaled to degrees by to_fast_data()) — don't scale that
+    a second time."""
+    return num(d.get("t_amb"), digits=1) if d.get("source") == "modbus" else num(d.get("t_amb"), 0.1, 1)
+
+
 GATEWAY_SENSORS: tuple[AgateSensorDescription, ...] = (
     # --- fast: power flow (1301) ---
     _power("solar_power", "p_sun", "Solar power"),
@@ -114,7 +122,7 @@ GATEWAY_SENSORS: tuple[AgateSensorDescription, ...] = (
     ),
     AgateSensorDescription(
         key="agate_temperature", name="aGate temperature", tier="fast", cmd=CMD_POWER_FLOW,
-        value_fn=lambda d: num(d["t_amb"], digits=1),
+        value_fn=_agate_temperature,
         native_unit_of_measurement=C, device_class=SensorDeviceClass.TEMPERATURE, state_class=MEAS,
     ),
     _energy("solar_energy_today", "kwh_sun", "Solar energy today"),

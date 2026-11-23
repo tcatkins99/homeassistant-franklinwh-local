@@ -80,6 +80,10 @@ programme id; `genStat` = generator state.
 - **`kwh_gen`** can report a non-zero value while the cloud reports 0 — not used.
 - **`offgridreason`**: locally `0` with the grid normal. Its meaning differs from the
   cloud field of the same name, so grid status is taken from `gridLineVol` (1707) instead.
+- **`t_amb`**: aGate ambient temperature, tenths of a degree C (inferred, not yet confirmed
+  against the app; other reporters see ~200-206 there for ~20°C). When the data source is
+  Modbus instead, the same sensor field comes from the SunSpec snapshot's `temp_ambient`,
+  which is already in whole degrees — not tenths.
 
 ### Operating mode (1725 / 1727)
 `scheduling_type` identifies the mode: **1 = Time of Use, 2 = Self Consumption,
