@@ -28,6 +28,32 @@ def at(seq: Any, index: int) -> Any:
     return seq[index] if isinstance(seq, list) and len(seq) > index else None
 
 
+# Grid counts as present above this line voltage (NZ nominal 230 V; US split-phase ~240 V).
+GRID_PRESENT_V = 150.0
+
+
+def is_off_grid(offgrid_state: Any, run: dict[str, Any] | None) -> bool:
+    """Off-grid only when offgridState (1723) is non-zero AND the grid is not present.
+
+    Some US split-phase aGates report offgridState 2 during ordinary grid-connected
+    operation (seen at 247 V, main relay closed, firmware identical to a second unit that
+    reports 0 there); what the value means beyond "0" isn't confirmed. Cross-checking the
+    fast-tier grid electrical reply (1707: line voltage, main relay) against GRID_PRESENT_V
+    avoids treating that as off-grid, while a genuine grid loss (low voltage or an open
+    relay) still counts as off-grid regardless of offgridState's exact value.
+    """
+    if offgrid_state in (None, 0, "0"):
+        return False
+    run = run or {}
+    volts = num(run.get("gridLineVol"), 0.1)
+    relay = run.get("mainRelay1Status")
+    if volts is not None and volts <= GRID_PRESENT_V:
+        return True
+    if relay == 0:
+        return True
+    return volts is None and relay is None
+
+
 @dataclass(frozen=True, kw_only=True)
 class AgateEntityDescription(EntityDescription):
     """Which tier/command feeds the entity and how to read it."""

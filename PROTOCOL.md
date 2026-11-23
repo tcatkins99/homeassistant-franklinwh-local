@@ -80,6 +80,16 @@ programme id; `genStat` = generator state.
 - **`kwh_gen`** can report a non-zero value while the cloud reports 0 — not used.
 - **`offgridreason`**: locally `0` with the grid normal. Its meaning differs from the
   cloud field of the same name, so grid status is taken from `gridLineVol` (1707) instead.
+- **`t_amb`**: aGate ambient temperature, tenths of a degree C (inferred, not yet confirmed
+  against the app).
+
+### Off-grid (1723)
+`offgridState`: `0` with the grid normal. Non-zero values aren't fully understood — `2` has
+been seen on **US split-phase** aGates during ordinary grid-connected operation (one site:
+247 V, `mainRelay1Status` 1, importing ~2 kW; a second aGate with identical firmware reports
+`0` there instead). Because of this, off-grid status (`Grid status`, `Status`, `Off-grid
+mode`) is only taken as off-grid when `offgridState` is non-zero **and** the grid isn't
+present by `gridLineVol` / `mainRelay1Status` (1707) — see `is_off_grid()` in `entity.py`.
 
 ### Operating mode (1725 / 1727)
 `scheduling_type` identifies the mode: **1 = Time of Use, 2 = Self Consumption,
