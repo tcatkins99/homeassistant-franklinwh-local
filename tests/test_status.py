@@ -7,6 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "custom_components")))
 
+from franklinwh_local.entity import is_off_grid  # noqa: E402
 from franklinwh_local.sensor import STATUS_ICONS, agate_status  # noqa: E402
 
 results = []
@@ -37,7 +38,10 @@ check("running with no load", agate_status(flow(genStat=3), GRID_DOWN), "Generat
 check("09:21 Stop pressed", agate_status(flow(p_fhp=2298, genStat=4), GRID_DOWN), "Generator cooling down")
 check("09:22 back to standby", agate_status(flow(p_fhp=1205, genStat=1), GRID_DOWN), "Grid down – on battery")
 check("generator error", agate_status(flow(genStat=5), GRID_UP), "Generator error")
-check("off-grid setting wins over grid voltage", agate_status(flow(p_fhp=500), GRID_UP, offgrid_state=1), "Off-grid")
+check("off-grid setting with relay open wins over grid voltage",
+      agate_status(flow(p_fhp=500), {**GRID_UP, "mainRelay1Status": 0}, offgrid_state=1), "Off-grid")
+check("offgridState non-zero but grid present (voltage + relay): not off-grid (R#7)",
+      agate_status(flow(p_fhp=500), {**GRID_UP, "mainRelay1Status": 1}, offgrid_state=2), "Battery powering home")
 check("no generator module: genStat ignored", agate_status(flow(p_fhp=500, genStat=3), GRID_DOWN, generator=False),
       "Grid down – on battery")
 check("Modbus data (no genStat/genVoltage)", agate_status({"p_fhp": -1100, "p_uti": -250}, {"gridLineVol": 2412}),
@@ -46,6 +50,55 @@ check("no data", agate_status({}, {}), None)
 check("every state has an icon", all(s in STATUS_ICONS for s in (
     "Generator starting", "Generator warming up", "Generator on load", "Generator cooling down",
     "Grid down – on battery", "Charging battery", "Idle")), True)
+
+# is_off_grid (R#7, npds188#7): offgridState 2 was seen on a US split-phase aGate in normal
+# grid-connected operation (247 V, relay closed); grid presence from the fast tier (1707)
+# decides, not the raw offgridState value.
+check("offgridState 2, 247 V, relay closed: not off-grid (normal)",
+      is_off_grid(2, {"gridLineVol": 2470, "mainRelay1Status": 1}), False)
+check("offgridState non-zero, relay open: off-grid",
+      is_off_grid(1, {"gridLineVol": 2470, "mainRelay1Status": 0}), True)
+check("offgridState non-zero, low voltage: off-grid",
+      is_off_grid(1, {"gridLineVol": 20, "mainRelay1Status": 1}), True)
+check("offgridState 0, low voltage: not off-grid (grid down, not off-grid)",
+      is_off_grid(0, {"gridLineVol": 20, "mainRelay1Status": 1}), False)
+check("Modbus-sourced data, no offgridState known: not off-grid",
+      is_off_grid(None, {"source": "modbus", "gridLineVol": 2470, "mainRelay1Status": 1}), False)
+
+# Entity-level: GridStatusSensor and the off_grid_mode binary sensor agree with is_off_grid,
+# each reading the other tier's raw data directly (GridStatusSensor: detail's CMD_OFFGRID;
+# off_grid_mode: fast's CMD_RUN_STATUS), same cross-tier pattern as StormBackupSensor.
+from types import SimpleNamespace  # noqa: E402
+
+from franklinwh_local.binary_sensor import OffGridModeSensor  # noqa: E402
+from franklinwh_local.const import CMD_OFFGRID, CMD_RUN_STATUS  # noqa: E402
+from franklinwh_local.coordinator import AgateRuntime  # noqa: E402
+from franklinwh_local.entity import num as _num  # noqa: E402
+from franklinwh_local.sensor import GRID_NORMAL, GRID_OFF, GridStatusSensor  # noqa: E402
+
+
+def _entities(run, offgrid_state):
+    rt = object.__new__(AgateRuntime)
+    rt.fast = SimpleNamespace(data={CMD_RUN_STATUS: run})
+    rt.detail = SimpleNamespace(data={CMD_OFFGRID: {"offgridState": offgrid_state}})
+
+    class Gs(GridStatusSensor):
+        reply = property(lambda self: run)
+
+    class Og(OffGridModeSensor):
+        reply = property(lambda self: {"offgridState": offgrid_state})
+
+    gs, og = object.__new__(Gs), object.__new__(Og)
+    gs.rt = og.rt = rt
+    gs.entity_description = SimpleNamespace(value_fn=lambda d: _num(d["gridLineVol"], 0.1))
+    return gs.native_value, og.is_on
+
+
+NORMAL_RUN = {"gridLineVol": 2470, "mainRelay1Status": 1}
+check("entities: offgridState 2, grid present -> Normal / off_grid_mode off",
+      _entities(NORMAL_RUN, 2), (GRID_NORMAL, False))
+check("entities: offgridState 2, relay open -> Off-grid / off_grid_mode on",
+      _entities({**NORMAL_RUN, "mainRelay1Status": 0}, 2), (GRID_OFF, True))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

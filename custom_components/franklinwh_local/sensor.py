@@ -50,7 +50,7 @@ from .const import (
     SOURCE_MODBUS,
 )
 from .coordinator import AgateRuntime, CounterGuard, storm_backup
-from .entity import AgateEntity, AgateEntityDescription, num
+from .entity import GRID_PRESENT_V, AgateEntity, AgateEntityDescription, is_off_grid, num
 
 W, KWH, V, A, HZ, C = (
     UnitOfPower.WATT,
@@ -547,7 +547,6 @@ class OperatingModeSensor(AgateEntity, SensorEntity):
 
 
 GRID_NORMAL, GRID_DOWN, GRID_OFF = "Normal", "Grid down", "Off-grid"
-GRID_PRESENT_V = 150.0
 
 
 class GridStatusSensor(AgateEntity, SensorEntity):
@@ -572,7 +571,7 @@ class GridStatusSensor(AgateEntity, SensorEntity):
         if volts is None:
             return None
         offgrid = ((self.rt.detail.data or {}).get(CMD_OFFGRID) or {}).get("offgridState")
-        if offgrid not in (None, 0, "0"):
+        if is_off_grid(offgrid, self.reply):
             return GRID_OFF
         return GRID_NORMAL if volts > GRID_PRESENT_V else GRID_DOWN
 
@@ -628,7 +627,7 @@ def agate_status(flow: dict[str, Any], run: dict[str, Any], offgrid_state: Any =
             return "Generator exercising"
         if gen_state == 5:
             return "Generator error"
-    if offgrid_state not in (None, 0, "0"):
+    if is_off_grid(offgrid_state, run):
         return "Off-grid"
     volts = num((run or {}).get("gridLineVol"), 0.1)
     if volts is not None and volts <= GRID_PRESENT_V:

@@ -26,13 +26,10 @@ from .const import (
     MODULE_ENTITY_KEYS,
 )
 from .coordinator import AgateRuntime, storm_backup
-from .entity import AgateEntity, AgateEntityDescription, num
+from .entity import GRID_PRESENT_V, AgateEntity, AgateEntityDescription, is_off_grid, num
 
 DIAG = EntityCategory.DIAGNOSTIC
 PROBLEM = BinarySensorDeviceClass.PROBLEM
-
-# Grid counts as present above this line voltage (NZ nominal 230 V).
-GRID_PRESENT_V = 150.0
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -68,7 +65,8 @@ BINARY_SENSORS: tuple[AgateBinaryDescription, ...] = (
     AgateBinaryDescription(
         key="off_grid_mode", name="Off-grid mode", tier="detail", cmd=CMD_OFFGRID,
         value_fn=lambda d: int(d["offgridState"]) != 0,
-        attrs_fn=lambda d: {"offgridSet": d.get("offgridSet"), "offgridSoc": d.get("offgridSoc")},
+        attrs_fn=lambda d: {"offgrid_state": d.get("offgridState"), "offgridSet": d.get("offgridSet"),
+                            "offgridSoc": d.get("offgridSoc")},
     ),
     AgateBinaryDescription(
         key="grid_relay_welded", name="Grid relay welded", tier="detail", cmd=CMD_RELAY_STATUS,
@@ -99,6 +97,29 @@ class AgateBinarySensor(AgateEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         return self._value()
+
+
+OFF_GRID_DESCRIPTION = next(d for d in BINARY_SENSORS if d.key == "off_grid_mode")
+
+
+class OffGridModeSensor(AgateBinarySensor):
+    """Off-grid mode (1723, detail tier), cross-checked against the fast-tier grid data.
+
+    Follows the pattern StormBackupSensor uses: bound to its own tier (detail, for
+    offgridState's availability) but reading the other tier's raw data directly, not
+    subscribed to it.
+    """
+
+    def __init__(self, rt: AgateRuntime) -> None:
+        super().__init__(rt, OFF_GRID_DESCRIPTION)
+
+    @property
+    def is_on(self) -> bool | None:
+        reply = self.reply
+        if reply is None:
+            return None
+        run = (self.rt.fast.data or {}).get(CMD_RUN_STATUS)
+        return is_off_grid(reply.get("offgridState"), run)
 
 
 # Storm Hedge is cloud-driven; locally the power flow's mode becomes code 6 while it holds the
@@ -158,7 +179,10 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: AgateConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     rt = entry.runtime_data
-    entities: list[BinarySensorEntity] = [AgateBinarySensor(rt, d) for d in BINARY_SENSORS if rt.shows(d.key, d.module)]
+    entities: list[BinarySensorEntity] = [
+        OffGridModeSensor(rt) if d.key == OFF_GRID_DESCRIPTION.key else AgateBinarySensor(rt, d)
+        for d in BINARY_SENSORS if rt.shows(d.key, d.module)
+    ]
     if rt.shows(STORM_DESCRIPTION.key):
         entities.append(StormBackupSensor(rt))
     if rt.has(MOD_CIRCUITS):
